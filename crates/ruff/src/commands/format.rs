@@ -610,9 +610,7 @@ impl<'a> FormatResults<'a> {
         f: &mut impl Write,
         output_format: OutputFormat,
     ) -> io::Result<()> {
-        let notebook_index = HashMap::default();
-        let context = EmitterContext::new(&notebook_index);
-        let config = DisplayDiagnosticConfig::default();
+        let mut notebook_index = FxHashMap::default();
         let diagnostics: Vec<_> = self
             .results
             .iter()
@@ -622,28 +620,51 @@ impl<'a> FormatResults<'a> {
                     formatted,
                 } = &result.result
                 {
+                    let path = result.path.to_string_lossy();
+
+                    // For now, report the edit as a replacement of the whole file's contents. For
+                    // scripts, this is a single `Edit`, but notebook edits must be split by cell in
+                    // order to render them as diffs.
+                    let fix = if let SourceKind::IpyNotebook(formatted) = formatted
+                        && let SourceKind::IpyNotebook(unformatted) = unformatted
+                    {
+                        notebook_index.insert(path.to_string(), unformatted.index().clone());
+
+                        let mut edits = formatted
+                            .cell_offsets()
+                            .ranges()
+                            .zip(unformatted.cell_offsets().ranges())
+                            .map(|(formatted_range, unformatted_range)| {
+                                let formatted = &formatted.source_code()[formatted_range];
+                                Edit::range_replacement(formatted.to_string(), unformatted_range)
+                            });
+
+                        Fix::safe_edits(
+                            edits
+                                .next()
+                                .expect("Formatted files must have at least one edit"),
+                            edits,
+                        )
+                    } else {
+                        Fix::safe_edit(Edit::range_replacement(
+                            formatted.source_code().to_string(),
+                            TextRange::up_to(unformatted.source_code().text_len()),
+                        ))
+                    };
+
                     let mut diagnostic = Diagnostic::new(
                         DiagnosticId::Unformatted,
                         Severity::Error,
                         "File would be reformatted",
                     );
-                    let source_file = SourceFileBuilder::new(
-                        result.path.to_string_lossy(),
-                        unformatted.source_code(),
-                    )
-                    .finish();
+                    let source_file =
+                        SourceFileBuilder::new(path, unformatted.source_code()).finish();
                     let span = Span::from(source_file);
                     let mut annotation = Annotation::primary(span);
                     annotation.set_file_level(true);
                     diagnostic.annotate(annotation);
 
-                    // For now, report the edit as a replacement of the whole file's contents.
-                    let edit = Edit::range_replacement(
-                        formatted.source_code().to_string(),
-                        TextRange::up_to(unformatted.source_code().text_len()),
-                    );
-
-                    diagnostic.set_fix(Fix::safe_edit(edit));
+                    diagnostic.set_fix(fix);
 
                     Some(diagnostic)
                 } else {
@@ -653,6 +674,8 @@ impl<'a> FormatResults<'a> {
             .sorted_unstable_by(Diagnostic::ruff_start_ordering)
             .collect();
 
+        let context = EmitterContext::new(&notebook_index);
+        let config = DisplayDiagnosticConfig::default();
         match output_format {
             OutputFormat::Concise => {
                 let config = config
