@@ -76,6 +76,7 @@ pub(crate) fn format(
     let (paths, resolver) = python_files_in_path(&files, &pyproject_config, config_arguments)?;
 
     let output_format = pyproject_config.settings.output_format;
+    let preview = pyproject_config.settings.formatter.preview;
 
     if paths.is_empty() {
         warn_user_once!("No Python files found under the given path(s)");
@@ -202,7 +203,11 @@ pub(crate) fn format(
     match mode {
         FormatMode::Write => {}
         FormatMode::Check => {
-            results.write_changed(&mut stdout().lock(), output_format)?;
+            if preview.is_enabled() {
+                results.write_changed_preview(&mut stdout().lock(), output_format)?;
+            } else {
+                results.write_changed(&mut stdout().lock())?;
+            }
         }
         FormatMode::Diff => {
             results.write_diff(&mut stdout().lock())?;
@@ -214,7 +219,7 @@ pub(crate) fn format(
         if mode.is_diff() {
             // Allow piping the diff to e.g. a file by writing the summary to stderr
             results.write_summary(&mut stderr().lock())?;
-        } else if output_format.is_human_readable() {
+        } else if !preview.is_enabled() || output_format.is_human_readable() {
             results.write_summary(&mut stdout().lock())?;
         }
     }
@@ -580,7 +585,31 @@ impl<'a> FormatResults<'a> {
     }
 
     /// Write a list of the files that would be changed to the given writer.
-    fn write_changed(&self, f: &mut impl Write, output_format: OutputFormat) -> io::Result<()> {
+    fn write_changed(&self, f: &mut impl Write) -> io::Result<()> {
+        for path in self
+            .results
+            .iter()
+            .filter_map(|result| {
+                if result.result.is_formatted() {
+                    Some(result.path.as_path())
+                } else {
+                    None
+                }
+            })
+            .sorted_unstable()
+        {
+            writeln!(f, "Would reformat: {}", fs::relativize_path(path).bold())?;
+        }
+
+        Ok(())
+    }
+
+    /// Write a list of the files that would be changed to the given writer.
+    fn write_changed_preview(
+        &self,
+        f: &mut impl Write,
+        output_format: OutputFormat,
+    ) -> io::Result<()> {
         let notebook_index = HashMap::default();
         let context = EmitterContext::new(&notebook_index);
         let config = DisplayDiagnosticConfig::default();

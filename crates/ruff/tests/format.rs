@@ -70,8 +70,8 @@ bar =     "needs formatting"
     success: false
     exit_code: 1
     ----- stdout -----
-    bar.py: unformatted: File would be reformatted
-    foo.py: unformatted: File would be reformatted
+    Would reformat: bar.py
+    Would reformat: foo.py
     2 files would be reformatted
 
     ----- stderr -----
@@ -492,8 +492,8 @@ OTHER = "OTHER"
     success: false
     exit_code: 1
     ----- stdout -----
-    main.py: unformatted: File would be reformatted
-    test.py: unformatted: File would be reformatted
+    Would reformat: main.py
+    Would reformat: test.py
     2 files would be reformatted
 
     ----- stderr -----
@@ -520,11 +520,7 @@ fn deduplicate_directory_and_explicit_file() -> Result<()> {
     success: false
     exit_code: 1
     ----- stdout -----
-    unformatted: File would be reformatted
-    --> main.py:1:1
-      - x   = 1
-    1 + x = 1
-
+    Would reformat: main.py
     1 file would be reformatted
 
     ----- stderr -----
@@ -581,7 +577,7 @@ if __name__ == "__main__":
     success: false
     exit_code: 1
     ----- stdout -----
-    main.py: unformatted: File would be reformatted
+    Would reformat: main.py
     1 file would be reformatted
 
     ----- stderr -----
@@ -658,6 +654,7 @@ if __name__ == "__main__":
                     "--no-cache",
                     "--output-format",
                     output_format,
+                    "--preview",
                     "--check",
                     "input.py",
                 ])
@@ -806,7 +803,7 @@ OTHER = "OTHER"
     success: false
     exit_code: 1
     ----- stdout -----
-    main.py: unformatted: File would be reformatted
+    Would reformat: main.py
     1 file would be reformatted
 
     ----- stderr -----
