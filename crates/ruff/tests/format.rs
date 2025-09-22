@@ -520,7 +520,11 @@ fn deduplicate_directory_and_explicit_file() -> Result<()> {
     success: false
     exit_code: 1
     ----- stdout -----
-    Would reformat: main.py
+    unformatted: File would be reformatted
+    --> main.py:1:1
+      - x   = 1
+    1 + x = 1
+
     1 file would be reformatted
 
     ----- stderr -----
