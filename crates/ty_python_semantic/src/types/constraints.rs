@@ -69,9 +69,23 @@ use rustc_hash::FxHashSet;
 
 use crate::types::visitor::{NonAtomicType, TypeKind, TypeVisitor, walk_non_atomic_type};
 use crate::types::{
-    BoundTypeVarInstance, IntersectionType, Type, TypeVarBoundOrConstraints, UnionType,
+    BoundTypeVarInstance, IntersectionType, Type, TypeRelation, TypeVarBoundOrConstraints,
+    UnionType,
 };
 use crate::{Db, FxIndexSet};
+
+fn simplify_cycle_recover<'db>(
+    _db: &'db dyn Db,
+    _value: &Node<'db>,
+    _count: u32,
+    _self: InteriorNode<'db>,
+) -> salsa::CycleRecoveryAction<Node<'db>> {
+    salsa::CycleRecoveryAction::Iterate
+}
+
+fn simplify_cycle_initial<'db>(_db: &'db dyn Db, this: InteriorNode<'db>) -> Node<'db> {
+    Node::Interior(this)
+}
 
 /// An extension trait for building constraint sets from [`Option`] values.
 pub(crate) trait OptionConstraintsExtension<T> {
@@ -196,9 +210,18 @@ impl<'db> ConstraintSet<'db> {
         typevar: BoundTypeVarInstance<'db>,
         lower: Type<'db>,
         upper: Type<'db>,
+        relation: TypeRelation,
     ) -> Self {
-        let lower = lower.bottom_materialization(db);
-        let upper = upper.top_materialization(db);
+        let (lower, upper) = match relation {
+            TypeRelation::Subtyping => (
+                lower.top_materialization(db),
+                upper.bottom_materialization(db),
+            ),
+            TypeRelation::Assignability => (
+                lower.bottom_materialization(db),
+                upper.top_materialization(db),
+            ),
+        };
         let node = RangeConstraint::new_node(db, lower, typevar, upper);
         Self { node }
     }
@@ -927,7 +950,11 @@ impl<'db> InteriorNode<'db> {
         }
     }
 
-    #[salsa::tracked(heap_size=ruff_memory_usage::heap_size)]
+    #[salsa::tracked(
+        cycle_fn=simplify_cycle_recover,
+        cycle_initial=simplify_cycle_initial,
+        heap_size=ruff_memory_usage::heap_size,
+    )]
     fn simplify(self, db: &'db dyn Db) -> Node<'db> {
         let mut visited_atoms = FxHashSet::default();
         let mut new_atoms = vec![self.atom(db)];
@@ -1303,12 +1330,22 @@ impl<'db> BoundTypeVarInstance<'db> {
     pub(crate) fn valid_specializations(self, db: &'db dyn Db) -> ConstraintSet<'db> {
         match self.typevar(db).bound_or_constraints(db) {
             None => ConstraintSet::from(true),
-            Some(TypeVarBoundOrConstraints::UpperBound(bound)) => {
-                ConstraintSet::constrain_typevar(db, self, Type::Never, bound)
-            }
+            Some(TypeVarBoundOrConstraints::UpperBound(bound)) => ConstraintSet::constrain_typevar(
+                db,
+                self,
+                Type::Never,
+                bound,
+                TypeRelation::Assignability,
+            ),
             Some(TypeVarBoundOrConstraints::Constraints(constraints)) => {
                 constraints.elements(db).iter().when_any(db, |constraint| {
-                    ConstraintSet::constrain_typevar(db, self, *constraint, *constraint)
+                    ConstraintSet::constrain_typevar(
+                        db,
+                        self,
+                        *constraint,
+                        *constraint,
+                        TypeRelation::Assignability,
+                    )
                 })
             }
         }
